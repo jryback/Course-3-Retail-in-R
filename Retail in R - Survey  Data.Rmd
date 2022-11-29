@@ -1,0 +1,198 @@
+---
+title: "Retail in R - Survey Data.Rmd"
+author: "JRyback"
+date: "November 28, 2022"
+output: html_document
+---
+
+# Customer Preferences
+
+Blackwell's sales team had engaged a marketing research firm to conduct a survey of existing customers, in part to find which of two brands, Acer or Sony, they preferred. The overall goal was to determine whether the company should enter a deeper relationship with one of the two companies, if at all. The completed survey data could then be used in further analyses of sales, brand, or product information.
+
+Unfortunately, the data for approximately one-third of the survey results was corrupted and the brand preference was not properly captured. They came to me hoping to use machine learning to recapture the results of the corrupted part of the survey by using the uncorrupted data.
+
+```{r packages}
+library(caret)
+library(ggplot2)
+library(gbm)
+library(writexl)
+```
+
+The packages I will be using in this project are caret and ggplot2. Ggplot2 for the excellent visualization. Caret will help us generate our predictive models. GBM will help me examine the Gradient Boosting Machine model that we will use. The sales team requested that we return an excel file to them, so we will use writexl for the output.
+
+## The Survey Data
+
+The data came in two separate sets, one of the corrupted data, one of uncorrupted data.
+
+### Uncorrupted Survey Data
+
+```{r loading and cleaning the completed data}
+complete <- read.csv('SurveyData/CompleteResponses.csv')
+#subbing in brand names to change data type
+complete$brand <- sub('0', 'Acer', complete$brand)
+complete$brand <- sub('1', 'Sony', complete$brand)
+#checkiing for duplicate and null values 
+complete <- unique(complete)
+complete <- na.omit(complete)
+summary(complete)
+```
+
+### Corrupted Survey Data
+
+```{r loading and completing the corrupted data}
+incomplete <- read.csv('SurveyData/SurveyIncomplete.csv')
+#Get rid of incorrect brand preference data, check for duplicates/null values
+incomplete <- subset(incomplete, select=-c(brand))
+incomplete <- unique(incomplete)
+incomplete <- na.omit(incomplete)
+summary(incomplete)
+```
+
+The uncorrupted data has about 9,900 observations while the corrupted has about 4,600.. Each of them has information about the customers' salary, age, education level, car model, region, and credit limit. The uncorrupted data has the customers' preferred brand as well. While the corrupted data did have a value for the preferred brand, it is considered unreliable. I removed it, to be replaced by the brand predicted by the algorithm. I also replaced the numbered values in the brand column (0 for Acer, 1 for Sony). This was to allow the algorithm to compute the results in a classification model.
+
+## Which customers prefer which brand?
+
+```{r Customer preferences in completed data}
+ggplot(data=complete) + geom_bar(mapping=aes(brand, fill=brand)) +
+  scale_fill_manual(values=c('#f4b942','#6b9ac4'))
+```
+
+Immediately we can see that more people in the completed survey data preferred Sony to Acer. Nearly double the number! Unless the algorithm predicts many more people preferring Acer, Sony may be the way to go.
+
+```{r brand preferences by salary and age}
+ggplot(data=complete) + geom_point(mapping=aes(x=salary, y=age, color=brand))+
+  scale_color_manual(values=c('#f4b942','#6b9ac4'))
+```
+
+While comparing the variables in the completed survey data, I found that the customer's salary had the most effect on their brand preference. The second-most important variable was their age. The graph above shows that people's preferences can be determined by age and salary, in three large groups. People under the age of 40 generally prefer to buy Acer products if they earn between \$50,000 and \$100,000 annually. People who prefer Acer and are between the ages of 40 and 60 have a slightly higher income on average, anywhere between \$80,000 and \$120,000 a year. People above 60 years old will prefer to buy Acer products if they make 20,000 to 70,000. Anyone outside of those group tend to prefer Sony over Acer. Notably, people with the highest salaries preferred Sony regardless of age.
+
+## Can we predict a customers' brand preference?
+
+The brand data is binary, meaning it only has two choices for an algorithm to choose from; Sony and Acer. This bodes well for our algorithm, since binary algorithms generally do better than other types. I will be trying three different types of categorical models; Random Forest, C5.0, and Gradient Boosting Machine.
+
+The first step is to separate the data into training and test sets. I made two sets, with the training having 75% of the uncorrupted survey data. I will test the models with a 10-fold cross-validation.
+
+```{r Creating training and testing data}
+set.seed(123)
+inTraining <- createDataPartition(complete$brand, p=.75, list=FALSE)
+train <- complete[inTraining,]
+test <- complete[-inTraining,]
+fitCon <- trainControl(method='repeatedcv', number=10, repeats=1)
+```
+
+### Random Forest
+
+The first model we will try is the Random Forest Classifier.
+
+```{r Random Forest}
+set.seed(123)
+SurveyRF <- train(brand~., data=train, method='rf', trControl=fitCon, tuneLength=5)
+SurveyRF
+```
+
+The highest score for the random forest's accuracy is 91.77%. That's very good, but we should still try the other models! The kappa is a bit lower, at 82.52. The kappa takes the expected accuracy into account and measures the agreement between inter-raters. Two raters (or more) will apply the same criteria to determine whether or not some condition occurs. For example, the raters make a prediction on which brand each person prefers based on the dependent data from the survey (age, salary, education, etc.) and the predictive algorithm used. If they agree on most accounts, then the criteria is considered reliable. Even though the kappa is a bit lower than the accuracy, it is still a very good score and can be considered reliable.
+
+```{r Random Forest Confusion Matrix}
+confusionMatrix(SurveyRF)
+```
+
+The confusion matrix shows that it correctly predicted about 34% of the testing set to prefer Acer, and 58% to prefer Sony. The incorrect predictions were about even. It incorrectly predicted Acer 4.3% of the time and Sony 4%.
+
+```{r}
+varImp(SurveyRF)
+```
+
+The salary variable was used the most, with the age as a distant second. The other variables were barely considered at all. As we saw above, the customers' age had a significant effect on their preference.
+
+### C5.0
+
+The second model we will try is the C5.0 Classifier.
+
+```{r, warning=FALSE}
+set.seed(123)
+SurveyC50 <- train(brand~., data=train, method='C5.0', trControl=fitCon, tuneLength=5)
+SurveyC50
+```
+
+This one did about as well as the Random Forest model, but slightly better! The accuracy was 91.83%, while the kappa was 82.65. They're very close!
+
+```{r C5.0 Confusion Matrix}
+confusionMatrix(SurveyC50)
+```
+
+The confusion matrix for the C5.0 model looks very similar to that of the Random Forest Model. It had slightly more incorrect predictions for Acer at 4.4%.
+
+```{r}
+varImp(SurveyC50)
+```
+
+The C5.0 model placed the age and salary variables at equal importance. While these were the two variables that were observed to have the most effect, I wonder if putting them on an equal footing is the best solution. The credit and car variables were also factored into the algorithm. Notably, the education level and zip code had no effect.
+
+### Gradient Boosting Machine
+
+The third and final model we will test is the Gradient Boosting Machine model.
+
+```{r Gradient Boosting Machine}
+set.seed(123)
+SurveyGBM <- train(brand~., data=train, method='gbm', verbose=FALSE, trControl=fitCon, tuneLength=5)
+SurveyGBM 
+```
+
+This model performed very well as well. It did better than the other models but only slightly. The best accuracy score was 92.27%, with its kappa as 83.61.
+
+```{r}
+confusionMatrix(SurveyGBM)
+```
+
+The cross-validation shows why it performed better than the other models. The correct predictions and the incorrect Acer predictions are about the same, but a bit higher for the correct predictions, and lower for the incorrect ones. The real change is when the algorithm incorrectly predicted Sony. While both the other models predicted Sony incorrectly 4% of the time, the Gradient Boosting Machine predicted it 3.5%. While the difference is very small, when the algorithms' accuracy are so close every bit counts.
+
+```{r}
+varImp(SurveyGBM)
+```
+
+As with the Random Forest Model, the salary was the most important variable, followed by the age. The importance of the age variable seems to have hit a happy medium at 93.5% - it may be the cause of the lower percent of incorrect Sony guesses. The other variables were barely considered, with the education not factoring in at all.
+
+## Predictions
+
+Now that we've run and evaluated our models, it's time to apply them to the corrupted data!
+
+I have decided to use the Gradient Boosting Machine. Though the accuracy of each algorithm was very close, the Gradient Boosting Machine had the highest accuracy. Not only that, the Confusion matrix showed it had the highest accuracy in all of the correct prediction areas and the least amount in the incorrect areas.
+
+### Gradient Boosting Machine
+
+```{r}
+TestGBM <- predict(SurveyGBM, newdata=incomplete, interval='prediction')
+incomplete$brand <- TestGBM
+summary(incomplete)
+```
+
+Here I am creating the predictions for the brand preference of the corrupted data using the other answers that the customers gave and the Gradient Boosting model. Then I can add it to the incomplete data as an additional column.
+
+```{r}
+ggplot(data=incomplete) + geom_bar(mapping=aes(brand, fill=brand)) +
+  scale_fill_manual(values=c('#f4b942','#6b9ac4'))
+```
+
+Like the uncorrupted data, we can see that the algorithm has predicted more people preferred Sony to Acer. Next step is to combine the completed survey data with the now complete corrupted data.
+
+```{r}
+completedSurveyData <- rbind(complete, incomplete)
+summary(completedSurveyData)
+```
+
+Now the data is all together in one nice dataset, we can take a look at everything together.
+
+```{r}
+ggplot(data=completedSurveyData) + geom_bar(mapping=aes(brand, fill=brand)) +
+  scale_fill_manual(values=c('#f4b942','#6b9ac4'))
+```
+
+The original purpose of the survey was to determine which brand, Acer or Sony, to enter into a deeper partnership. In the completed survey information, nearly twice as many people preferred Sony over Acer. This trend continued in the predicted results. Overall, about 9,200 people preferred Sony. There were only around 5,600 whose preference was Acer. Also, as we saw above, people with the highest salaries preferred Sony regardless of age, education, or other factors.
+
+For these reasons, I would recommend that Blackwell Electronics deepen its relationship with Sony. It would encourage people who prefer Sony to come to Blackwell to purchase its products. As for the poeple who prefer Acer, the marketing team could use the age and salary information to create more targeted advertisements to draw them in.
+
+Now all that's left is to export the file to excel and send it on over to marketing!
+
+```{r}
+write_xlsx(completedSurveyData, path =tempfile(fileext='.xlsx'))
+```
